@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bobo and the Bus</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Literata:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+/* Layout: one centered "storybook" column — story card on top, game board below.
+   Single deliberate look (school-bus yellow on Puget Sound blue), same in light and dark. */
+:root{
+  --sound:#173b4a;      /* deep Puget Sound water: page ground */
+  --sound-2:#21505f;    /* raised panels */
+  --bus:#f5b700;        /* school-bus yellow: the one bold accent */
+  --paper:#f7f0de;      /* storybook page */
+  --ink:#1f2a2e;        /* text on paper */
+  --mist:#cfe0e3;       /* text on water */
+  --font-display:"Lilita One","Arial Rounded MT Bold","Trebuchet MS",sans-serif;
+  --font-body:"Literata",Georgia,"Times New Roman",serif;
+  color-scheme:dark;
+}
+html,body{background:var(--sound);color:var(--mist)}
+body{font-family:var(--font-body);padding-inline:16px;padding-block:20px 32px}
+.wrap{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+header{display:flex;flex-direction:column;gap:4px}
+.eyebrow{font-family:var(--font-display);letter-spacing:.08em;text-transform:uppercase;color:var(--bus);font-size:.8rem}
+h1{font-family:var(--font-display);font-weight:400;font-size:clamp(2.2rem,9vw,3.4rem);line-height:1;margin:0;color:var(--bus);text-wrap:balance}
+.sub{margin:0;font-style:italic;color:var(--mist)}
+.story{background:var(--paper);color:var(--ink);border-radius:6px;padding:16px 18px;font-size:1rem;line-height:1.55}
+.story p{margin:0 0 .6em}
+.story p:last-child{margin:0}
+.story .who{font-family:var(--font-display);color:#b5531e;letter-spacing:.03em}
+.board{position:relative;width:100%;aspect-ratio:3/4;max-width:100%;border-radius:6px;overflow:hidden;background:#2e6b78;touch-action:none}
+canvas{display:block;width:100%;height:100%}
+.hud{display:flex;justify-content:space-between;gap:12px;font-family:var(--font-display);font-size:1.15rem;color:var(--paper);font-variant-numeric:tabular-nums}
+.overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;text-align:center;background:rgba(23,59,74,.82);color:var(--paper)}
+.overlay h2{font-family:var(--font-display);font-weight:400;font-size:2rem;margin:0;color:var(--bus);text-wrap:balance}
+.overlay p{margin:0;max-width:30ch;line-height:1.5}
+button{font-family:var(--font-display);font-size:1.2rem;letter-spacing:.03em;background:var(--bus);color:var(--ink);border:0;border-radius:999px;padding:12px 28px;cursor:pointer}
+button:focus-visible{outline:3px solid var(--paper);outline-offset:3px}
+.howto{font-size:.9rem;color:var(--mist);margin:0}
+footer{font-size:.8rem;color:var(--mist);opacity:.8;line-height:1.5}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Anacortes Route · Stop 1</span>
+    <h1>Bobo and the Bus</h1>
+    <p class="sub">As told by Shannon, from the driver's seat</p>
+  </header>
+
+  <div class="story">
+    <p><span class="who">Shannon:</span> “Everybody sit down and buckle up, because you will not believe what Bobo did this morning.”</p>
+    <p>“He got loose down at the fish docks, and he was <em>hungry</em>. Bananas everywhere, seagulls everywhere. And the only way home was my bus.”</p>
+  </div>
+
+  <div class="hud" aria-live="polite">
+    <span id="score">Bananas 0 / 10</span>
+    <span id="time">Time 75</span>
+  </div>
+
+  <div class="board" id="board">
+    <canvas id="game" aria-label="Game board: Bobo the gorilla on the Anacortes docks"></canvas>
+    <div class="overlay" id="overlay">
+      <h2 id="ovTitle">Ready, Bobo?</h2>
+      <p id="ovText">Grab 10 bananas before the bell. Dodge the seagulls, they knock bananas loose. Then run for Shannon's bus!</p>
+      <button id="startBtn">Start</button>
+    </div>
+  </div>
+
+  <p class="howto">Phone: touch and hold where you want Bobo to go. Computer: arrow keys or W A S D.</p>
+
+  <footer>A gift for Shannon. Bobo was a real gorilla raised by an Anacortes family from 1951 to 1953 before moving to Seattle's Woodland Park Zoo. Today's adventure is pure bus-route legend.</footer>
+</div>
+
+<script>
+// ===== Bobo and the Bus — a beginner-readable game =====
+// The game runs in a fixed "world" 360 wide x 480 tall.
+// We scale that world to fit whatever screen it's on.
+
+const W = 360, H = 480;
+const GOAL = 10;          // bananas needed
+const TIME_LIMIT = 75;    // seconds
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const board = document.getElementById('board');
+const overlay = document.getElementById('overlay');
+const ovTitle = document.getElementById('ovTitle');
+const ovText = document.getElementById('ovText');
+const startBtn = document.getElementById('startBtn');
+const scoreEl = document.getElementById('score');
+const timeEl = document.getElementById('time');
+
+// ---- Fit the canvas to the screen (sharp on phones too) ----
+function resize(){
+  const r = board.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = r.width * dpr;
+  canvas.height = r.height * dpr;
+  // scale so we can always draw in world units (360 x 480)
+  ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
+  draw();
+}
+window.addEventListener('resize', resize);
+
+// ---- Game state: everything that changes while you play ----
+let state = 'ready';      // 'ready' | 'playing' | 'won' | 'lost'
+let bobo, bananas, gulls, bus, score, timeLeft, lastTime;
+
+function reset(){
+  bobo = { x: 60, y: 400, r: 18, speed: 150, stun: 0 };
+  bananas = [];
+  for (let i = 0; i < 5; i++) spawnBanana();
+  gulls = [makeGull(), makeGull()];
+  bus = null;               // the bus shows up once you have enough bananas
+  score = 0;
+  timeLeft = TIME_LIMIT;
+  updateHud();
+}
+
+function rand(min, max){ return min + Math.random() * (max - min); }
+
+function spawnBanana(){
+  // keep bananas on the dock (not in the water strip at the top)
+  bananas.push({ x: rand(30, W - 30), y: rand(130, H - 30), wobble: rand(0, 6) });
+}
+
+function makeGull(){
+  return { x: rand(0, W), y: rand(20, 100), vx: rand(-60, 60), vy: rand(20, 50), flap: rand(0, 6) };
+}
+
+// ---- Controls: keyboard + touch/mouse ----
+const keys = {};
+window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true;
+  if (e.key.startsWith('Arrow')) e.preventDefault(); });
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+let pointer = null;  // where the finger/mouse is, in world units
+function toWorld(e){
+  const r = board.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H };
+}
+canvas.addEventListener('pointerdown', e => { pointer = toWorld(e); canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointermove', e => { if (pointer) pointer = toWorld(e); });
+canvas.addEventListener('pointerup', () => { pointer = null; });
+canvas.addEventListener('pointercancel', () => { pointer = null; });
+
+// ---- Update: move things and check for bumps, every frame ----
+function update(dt){
+  // 1. Work out which way Bobo wants to go
+  let dx = 0, dy = 0;
+  if (keys['arrowleft'] || keys['a']) dx -= 1;
+  if (keys['arrowright'] || keys['d']) dx += 1;
+  if (keys['arrowup'] || keys['w']) dy -= 1;
+  if (keys['arrowdown'] || keys['s']) dy += 1;
+  if (pointer){ dx = pointer.x - bobo.x; dy = pointer.y - bobo.y; }
+  const len = Math.hypot(dx, dy);
+
+  if (bobo.stun > 0){
+    bobo.stun -= dt;                         // dizzy: can't move
+  } else if (len > 4){
+    bobo.x += dx / len * bobo.speed * dt;
+    bobo.y += dy / len * bobo.speed * dt;
+  }
+  // keep Bobo on the dock
+  bobo.x = Math.max(bobo.r, Math.min(W - bobo.r, bobo.x));
+  bobo.y = Math.max(110, Math.min(H - bobo.r, bobo.y));
+
+  // 2. Bananas: grab any you touch
+  for (let i = bananas.length - 1; i >= 0; i--){
+    const b = bananas[i];
+    if (Math.hypot(b.x - bobo.x, b.y - bobo.y) < bobo.r + 12){
+      bananas.splice(i, 1);
+      score++;
+      if (score < GOAL || bananas.length < 2) spawnBanana();
+    }
+  }
+
+  // 3. Seagulls: drift around, then dive at Bobo
+  for (const g of gulls){
+    const toX = bobo.x - g.x, toY = bobo.y - g.y;
+    const d = Math.hypot(toX, toY) || 1;
+    g.vx += toX / d * 40 * dt;               // gentle pull toward Bobo
+    g.vy += toY / d * 40 * dt;
+    const sp = Math.hypot(g.vx, g.vy), max = 95 + score * 4;
+    if (sp > max){ g.vx *= max / sp; g.vy *= max / sp; }
+    g.x += g.vx * dt; g.y += g.vy * dt;
+    g.flap += dt * 10;
+
+    if (d < bobo.r + 10 && bobo.stun <= 0){
+      // bonk! lose a banana, get dizzy, gull flies off
+      bobo.stun = 0.8;
+      if (score > 0){ score--; spawnBanana(); }
+      g.vx = -g.vx * 2; g.vy = -Math.abs(g.vy) * 2;
+    }
+  }
+  // add a third gull halfway through
+  if (score >= 5 && gulls.length < 3) gulls.push(makeGull());
+
+  // 4. Bus arrives once you have enough bananas
+  if (score >= GOAL && !bus) bus = { x: W + 120, y: 52, targetX: W - 115 };
+  if (bus && bus.x > bus.targetX) bus.x -= 140 * dt;
+  if (bus && bus.x <= bus.targetX + 1){
+    // the bus door is at its front-left corner
+    const doorX = bus.x + 18, doorY = bus.y + 70;
+    if (Math.hypot(doorX - bobo.x, doorY - bobo.y) < 40) return end('won');
+  }
+  if (bus && score < GOAL){ bus = null; }   // dropped below 10? bus leaves
+
+  // 5. Clock
+  timeLeft -= dt;
+  if (timeLeft <= 0){ timeLeft = 0; return end('lost'); }
+  updateHud();
+}
+
+function updateHud(){
+  scoreEl.textContent = score >= GOAL ? 'Get to the bus!' : `Bananas ${score} / ${GOAL}`;
+  timeEl.textContent = `Time ${Math.ceil(timeLeft)}`;
+}
+
+// ---- Draw: paint the whole scene, every frame ----
+function draw(){
+  if (!bobo) reset();
+  // water and dock
+  ctx.fillStyle = '#2e6b78'; ctx.fillRect(0, 0, W, 110);
+  ctx.strokeStyle = 'rgba(207,224,227,.35)'; ctx.lineWidth = 2;
+  for (let i = 0; i < 6; i++){ ctx.beginPath(); ctx.arc(30 + i * 62, 30 + (i % 2) * 22, 10, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke(); }
+  ctx.fillStyle = '#a77a4c'; ctx.fillRect(0, 100, W, H - 100);
+  ctx.strokeStyle = '#8b6239'; ctx.lineWidth = 2;
+  for (let y = 130; y < H; y += 30){ ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  ctx.fillStyle = '#5b3c22'; for (let x = 10; x < W; x += 60) ctx.fillRect(x, 92, 10, 18); // pilings
+
+  // a fish crate or two for flavor
+  drawCrate(270, 360); drawCrate(40, 200);
+
+  // bus
+  if (bus) drawBus(bus.x, bus.y);
+
+  // bananas
+  const t = performance.now() / 1000;
+  for (const b of bananas) drawBanana(b.x, b.y + Math.sin(t * 3 + b.wobble) * 2);
+
+  // Bobo
+  drawBobo(bobo.x, bobo.y, bobo.stun > 0);
+
+  // gulls on top
+  for (const g of gulls) drawGull(g.x, g.y, g.flap);
+}
+
+function drawCrate(x, y){
+  ctx.fillStyle = '#6e4a2a'; ctx.fillRect(x, y, 44, 30);
+  ctx.strokeStyle = '#4a2f18'; ctx.lineWidth = 2; ctx.strokeRect(x, y, 44, 30);
+  ctx.beginPath(); ctx.moveTo(x, y + 15); ctx.lineTo(x + 44, y + 15); ctx.stroke();
+  ctx.fillStyle = '#f7f0de'; ctx.font = '9px Georgia'; ctx.fillText('SALMON', x + 5, y + 12);
+}
+
+function drawBanana(x, y){
+  ctx.strokeStyle = '#f5d000'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(x, y - 8, 12, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke();
+  ctx.fillStyle = '#4a3a12'; ctx.beginPath(); ctx.arc(x + 11, y - 3, 2, 0, 7); ctx.fill();
+}
+
+function drawBobo(x, y, dizzy){
+  ctx.fillStyle = '#2b2522';                                   // body
+  ctx.beginPath(); ctx.arc(x, y, 18, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(x - 16, y + 6, 7, 0, 7); ctx.arc(x + 16, y + 6, 7, 0, 7); ctx.fill(); // arms
+  ctx.fillStyle = '#8c7462';                                   // face
+  ctx.beginPath(); ctx.ellipse(x, y - 2, 11, 9, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#1a1412';
+  if (dizzy){                                                  // swirly eyes
+    ctx.font = '9px Georgia'; ctx.fillText('@ @', x - 9, y - 1);
+  } else {
+    ctx.beginPath(); ctx.arc(x - 4, y - 4, 2, 0, 7); ctx.arc(x + 4, y - 4, 2, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y + 2, 4, 0.2, Math.PI - 0.2); ctx.strokeStyle = '#1a1412'; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+  ctx.fillStyle = '#c0392b'; ctx.fillRect(x - 10, y - 24, 20, 5);   // little red cap
+}
+
+function drawGull(x, y, flap){
+  const w = Math.sin(flap) * 5;
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x - 12, y - w); ctx.quadraticCurveTo(x - 5, y - 6, x, y);
+  ctx.quadraticCurveTo(x + 5, y - 6, x + 12, y - w); ctx.stroke();
+  ctx.fillStyle = '#f5b700'; ctx.fillRect(x - 1, y, 3, 3);
+}
+
+function drawBus(x, y){
+  ctx.fillStyle = '#f5b700'; ctx.fillRect(x, y, 110, 60);      // body
+  ctx.fillRect(x - 18, y + 25, 20, 35);                       // hood
+  ctx.fillStyle = '#1f2a2e'; ctx.fillRect(x - 18, y + 46, 128, 4); // stripe
+  ctx.fillStyle = '#cfe0e3';
+  for (let i = 0; i < 4; i++) ctx.fillRect(x + 8 + i * 25, y + 8, 18, 16); // windows
+  ctx.fillStyle = '#1f2a2e'; ctx.font = '10px Georgia'; ctx.fillText('ANACORTES', x + 22, y + 40);
+  ctx.beginPath(); ctx.arc(x + 10, y + 62, 8, 0, 7); ctx.arc(x + 85, y + 62, 8, 0, 7); ctx.fill(); // wheels
+  ctx.fillStyle = '#1f2a2e'; ctx.fillRect(x + 4, y + 26, 10, 30);   // door (front)
+}
+
+// ---- The game loop: update, draw, repeat ~60 times a second ----
+function loop(now){
+  if (state !== 'playing') return;
+  const dt = Math.min(0.05, (now - lastTime) / 1000);  // seconds since last frame
+  lastTime = now;
+  update(dt);
+  draw();
+  if (state === 'playing') requestAnimationFrame(loop);
+}
+
+function start(){
+  reset();
+  state = 'playing';
+  overlay.hidden = true;
+  lastTime = performance.now();
+  requestAnimationFrame(loop);
+}
+
+function end(result){
+  state = result;
+  draw();
+  if (result === 'won'){
+    ovTitle.textContent = 'All aboard, Bobo!';
+    ovText.textContent = '“And that is why there are banana peels on seat number four. Nobody tell the transportation office.” — Shannon';
+    startBtn.textContent = 'Ride again';
+  } else {
+    ovTitle.textContent = 'The bell rang!';
+    ovText.textContent = '“Bobo missed the bus, so he had to walk to school. Gorillas are very slow walkers. Try again tomorrow, Bobo.”';
+    startBtn.textContent = 'Try again';
+  }
+  overlay.hidden = false;
+  startBtn.focus();
+}
+
+startBtn.addEventListener('click', start);
+resize();
+</script>
+</body>
+</html>
